@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- Formulaire complet (Reglages > Utilisateurs), pour un admin qui edite
+         le profil d'un autre utilisateur -->
+    <record id="view_users_form_archive_storage" model="ir.ui.view">
+        <field name="name">res.users.form.archive.storage</field>
+        <field name="model">res.users</field>
+        <field name="inherit_id" ref="base.view_users_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//notebook" position="inside">
+                <page string="Archivage" name="archive_storage">
+                    <group>
+                        <group string="Stockage">
+                            <field name="storage_provider"/>
+                            <field name="archive_server_id"
+                                   invisible="storage_provider != 'archive'"
+                                   required="storage_provider == 'archive'"/>
+                        </group>
+                        <group string="Verification"
+                               invisible="storage_provider != 'archive' or not archive_server_id.require_user_credentials">
+                            <field name="archive_access_token" password="True"/>
+                        </group>
+                    </group>
+                </page>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- Formulaire simplifie "Mon Profil" (accessible a tout utilisateur pour
+         lui-meme, sans passer par Reglages > Utilisateurs) -->
+    <record id="view_users_form_simple_modif_archive_storage" model="ir.ui.view">
+        <field name="name">res.users.preferences.form.archive.storage</field>
+        <field name="model">res.users</field>
+        <field name="inherit_id" ref="base.view_users_form_simple_modif"/>
+        <field name="arch" type="xml">
+            <xpath expr="//group[last()]" position="after">
+                <group string="Stockage des documents">
+                    <field name="storage_provider"/>
+                    <field name="archive_server_id"
+                           invisible="storage_provider != 'archive'"
+                           required="storage_provider == 'archive'"/>
+                    <field name="archive_access_token" password="True"
+                           invisible="storage_provider != 'archive' or not archive_server_id.require_user_credentials"/>
+                </group>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>

@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_attachment_form_archive_storage" model="ir.ui.view">
+        <field name="name">ir.attachment.form.archive.storage</field>
+        <field name="model">ir.attachment</field>
+        <field name="inherit_id" ref="base.view_attachment_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//group[last()]" position="after">
+                <group string="Archivage Distribué"
+                       invisible="storage_provider != 'archive'"
+                       groups="distributed_archive_storage.group_archive_storage_manager">
+                    <field name="storage_provider"/>
+                    <field name="archive_document_id"/>
+                    <field name="archive_path"/>
+                    <field name="archive_checksum"/>
+                    <field name="archive_state"/>
+                    <field name="archive_server_id" widget="many2one"
+                           options="{'no_open': False}"/>
+                </group>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- Vue liste simplifiée pour "Mes documents archivés" : accessible à
+         tout utilisateur, sans les champs techniques (res_model, res_field...)
+         ni les métadonnées serveur réservées aux admins. -->
+    <record id="view_my_archived_documents_list" model="ir.ui.view">
+        <field name="name">ir.attachment.list.my.archived</field>
+        <field name="model">ir.attachment</field>
+        <field name="arch" type="xml">
+            <list string="Mes documents archivés" create="false">
+                <field name="name"/>
+                <field name="mimetype"/>
+                <field name="file_size"/>
+                <field name="create_date"/>
+                <field name="archive_state"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- Vue formulaire dédiée pour "Mes documents archivés" : simple,
+         lecture des infos essentielles + bouton de suppression fiable
+         (contourne le bug de navigation de l'icône poubelle native dans
+         ce contexte précis). Distincte du formulaire technique admin. -->
+    <record id="view_my_archived_documents_form" model="ir.ui.view">
+        <field name="name">ir.attachment.form.my.archived</field>
+        <field name="model">ir.attachment</field>
+        <field name="arch" type="xml">
+            <form string="Document archivé" create="false">
+                <header>
+                    <button name="action_delete_and_return_to_list" type="object"
+                            string="Supprimer" class="btn-secondary"
+                            confirm="Voulez-vous vraiment supprimer ce document ?"/>
+                </header>
+                <sheet>
+                    <div class="oe_title">
+                        <h1><field name="name" readonly="1"/></h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="datas" filename="name" readonly="1"
+                                   string="Contenu du fichier"/>
+                            <field name="mimetype" readonly="1"/>
+                            <field name="file_size" readonly="1"/>
+                        </group>
+                        <group>
+                            <field name="create_date" readonly="1" string="Uploadé le"/>
+                            <field name="archive_state" readonly="1"/>
+                            <field name="res_model" readonly="1" string="Lié à"/>
+                        </group>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_my_archived_documents" model="ir.actions.act_window">
+        <field name="name">Mes documents archivés</field>
+        <field name="res_model">ir.attachment</field>
+        <field name="view_mode">list,form</field>
+        <field name="view_ids" eval="[(5, 0, 0),
+            (0, 0, {'view_mode': 'list', 'view_id': ref('view_my_archived_documents_list')}),
+            (0, 0, {'view_mode': 'form', 'view_id': ref('view_my_archived_documents_form')})]"/>
+        <field name="domain">[('storage_provider', '=', 'archive')]</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Aucun document archivé pour l'instant.
+            </p>
+            <p>
+                Les fichiers que vous uploadez apparaissent ici automatiquement
+                si votre stockage est réglé sur "Distributed Archive Storage"
+                dans vos préférences personnelles.
+            </p>
+        </field>
+    </record>
+
+    <!--
+        Menu de premier niveau, volontairement SANS attribut groups : visible
+        par tout utilisateur interne (contrairement au menu "Archivage Distribué"
+        sous Réglages, réservé aux admins). La visibilité PAR FICHIER reste de
+        toute façon garantie par la règle ir.rule (chacun ne voit que les siens),
+        donc pas de risque même sans restriction de menu ici.
+    -->
+    <menuitem id="menu_my_archived_documents_root"
+              name="Documents Archivés"
+              sequence="70"/>
+
+    <menuitem id="menu_my_archived_documents"
+              name="Mes documents"
+              parent="menu_my_archived_documents_root"
+              action="action_my_archived_documents"
+              sequence="10"/>
+
+</odoo>

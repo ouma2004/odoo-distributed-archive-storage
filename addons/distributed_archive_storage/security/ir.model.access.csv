@@ -1,0 +1,3 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_archive_storage_server_manager,archive.storage.server.manager,model_archive_storage_server,distributed_archive_storage.group_archive_storage_manager,1,1,1,1
+access_archive_storage_server_user,archive.storage.server.user,model_archive_storage_server,base.group_user,1,0,0,0

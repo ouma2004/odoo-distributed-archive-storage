@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data noupdate="0">
+
+        <!--
+            Groupe dédié plutôt que de réutiliser directement base.group_system.
+            Pourquoi : permet à un administrateur fonctionnel (sans être
+            Administrateur technique complet) de gérer les serveurs d'archivage,
+            si l'entreprise le souhaite plus tard. Par défaut, on l'implique
+            depuis group_system pour que les admins actuels l'aient automatiquement.
+        -->
+        <record id="group_archive_storage_manager" model="res.groups">
+            <field name="name">Archive Storage Administrator</field>
+            <field name="comment">
+                Peut créer, modifier et supprimer les serveurs d'archivage distribué,
+                et voir les informations de connexion sensibles (tokens, mots de passe).
+            </field>
+        </record>
+
+        <!--
+            Sens correct de l'implication : base.group_system (Administrateur
+            Réglages) DOIT impliquer notre groupe, pas l'inverse. Ainsi, tout
+            administrateur existant reçoit automatiquement ce nouveau groupe,
+            sans configuration manuelle. Odoo recalcule et applique cette
+            implication à tous les utilisateurs déjà membres de group_system
+            dès le chargement de cette donnée (install/update du module).
+        -->
+        <record id="base.group_system" model="res.groups">
+            <field name="implied_ids" eval="[(4, ref('group_archive_storage_manager'))]"/>
+        </record>
+
+    </data>
+</odoo>

@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Sauvegardes
+*.bak
+
+# VS Code
+.vscode/
+
+# Variables d'environnement
+.env
+
+# Configuration locale Odoo
+config/odoo.conf
+
+# Environnements virtuels
+venv/
+.venv/
+
+# Cache de tests
+.pytest_cache/
+.coverage
+
+*.log
+*.tmp
+
+# Fichiers système
+.DS_Store
+Thumbs.db

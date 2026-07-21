@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_archive_storage_server_list" model="ir.ui.view">
+        <field name="name">archive.storage.server.list</field>
+        <field name="model">archive.storage.server</field>
+        <field name="arch" type="xml">
+            <list>
+                <field name="priority"/>
+                <field name="name"/>
+                <field name="city"/>
+                <field name="project_name"/>
+                <field name="connection_mode"/>
+                <field name="api_url"/>
+                <field name="active"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_archive_storage_server_form" model="ir.ui.view">
+        <field name="name">archive.storage.server.form</field>
+        <field name="model">archive.storage.server</field>
+        <field name="arch" type="xml">
+            <form>
+                <header>
+                    <button name="action_test_connection" type="object"
+                            string="Tester la connexion" class="btn-primary"/>
+                </header>
+                <sheet>
+                    <widget name="web_ribbon" title="Archivé" bg_color="text-bg-danger"
+                            invisible="active"/>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1><field name="name" placeholder="Serveur Rabat - Primaire"/></h1>
+                    </div>
+                    <field name="company_id" groups="base.group_multi_company"/>
+                    <group>
+                        <group string="Connexion">
+                            <field name="api_url" placeholder="https://archive-rabat.exemple.ma"/>
+                            <field name="city"/>
+                            <field name="project_name" readonly="1"/>
+                            <field name="connection_mode" readonly="1"/>
+                            <field name="timeout"/>
+                            <field name="priority"/>
+                            <field name="deletion_policy" widget="radio"/>
+                            <field name="active"/>
+                        </group>
+                        <group string="Sécurité"
+                               groups="distributed_archive_storage.group_archive_storage_manager">
+                            <field name="api_token" widget="password_toggle"/>
+                            <field name="verification_secret" widget="password_toggle"/>
+                            <field name="ssl_verify"/>
+                            <field name="email"/>
+                        </group>
+                    </group>
+                    <group string="Autorisations"
+                           groups="distributed_archive_storage.group_archive_storage_manager">
+                        <field name="allowed_user_ids" widget="many2many_tags"
+                               placeholder="Laisser vide = tous les utilisateurs internes autorisés"/>
+                        <field name="require_user_credentials"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_archive_storage_server" model="ir.actions.act_window">
+        <field name="name">Serveurs d'archivage</field>
+        <field name="res_model">archive.storage.server</field>
+        <field name="view_mode">list,form</field>
+        <field name="context">{"active_test": False}</field>
+    </record>
+
+    <menuitem id="menu_archive_storage_root"
+              name="Archivage Distribué"
+              parent="base.menu_administration"
+              groups="distributed_archive_storage.group_archive_storage_manager"
+              sequence="60"/>
+
+    <menuitem id="menu_archive_storage_server"
+              name="Serveurs"
+              parent="menu_archive_storage_root"
+              action="action_archive_storage_server"
+              sequence="10"/>
+
+</odoo>

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data noupdate="0">
+
+        <!--
+            Restreint la visibilité des pièces jointes ARCHIVÉES (storage_provider
+            = 'archive') à leur créateur, pour les utilisateurs classiques.
+            Le '|' avec storage_provider != 'archive' signifie : cette règle ne
+            touche JAMAIS aux pièces jointes locales classiques (chatter, documents
+            partagés...) — seul le périmètre de notre module est concerné.
+        -->
+        <record id="rule_ir_attachment_archive_own_only" model="ir.rule">
+            <field name="name">Archive attachments: own files only</field>
+            <field name="model_id" ref="base.model_ir_attachment"/>
+            <field name="domain_force">
+                ['|', ('storage_provider', '!=', 'archive'), ('create_uid', '=', user.id)]
+            </field>
+            <field name="groups" eval="[(4, ref('base.group_user'))]"/>
+        </record>
+
+        <!--
+            Les administrateurs d'archivage voient TOUS les fichiers archivés,
+            quel que soit leur créateur. Combinée par Odoo en OR avec la règle
+            ci-dessus (règles de groupes différents = OR) : un admin membre des
+            deux groupes n'est donc jamais restreint.
+        -->
+        <record id="rule_ir_attachment_archive_admin_all" model="ir.rule">
+            <field name="name">Archive attachments: admins see all</field>
+            <field name="model_id" ref="base.model_ir_attachment"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="groups" eval="[(4, ref('group_archive_storage_manager'))]"/>
+        </record>
+
+    </data>
+</odoo>
