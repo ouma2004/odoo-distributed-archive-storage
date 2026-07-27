@@ -164,6 +164,7 @@ class IrAttachment(models.Model):
         user = self.env.user
         if user.storage_provider != "archive" or not user.archive_server_id:
             return vals
+        user._check_archive_authorization()
 
         server = user.archive_server_id
         bin_data = vals["raw"] if has_raw else base64.b64decode(vals["datas"])
@@ -225,9 +226,10 @@ class IrAttachment(models.Model):
         if user.storage_provider != "archive" or not user.archive_server_id:
             return super()._file_write(bin_data, checksum)
 
+        user._check_archive_authorization()
         if self.store_fname and self.store_fname.startswith(f"{ARCHIVE_FNAME_PREFIX}:"):
             return self.store_fname
-
+        
         server = user.archive_server_id
         filename = self.name or "unnamed.bin"
         mimetype = self.mimetype or mimetypes.guess_type(filename)[0] \
