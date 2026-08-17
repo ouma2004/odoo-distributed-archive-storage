@@ -1,4 +1,5 @@
 version: '3.1'
+
 services:
   web:
     image: odoo:19.0
@@ -12,19 +13,36 @@ services:
       - ./addons:/mnt/extra-addons
     environment:
       - HOST=db
-      - USER=odoo
-      - PASSWORD=odoo
+      - USER=${POSTGRES_USER}
+      - PASSWORD=${POSTGRES_PASSWORD}
+
   db:
     image: postgres:15
     environment:
-      - POSTGRES_DB=archive
-      - POSTGRES_USER=odoo
-      - POSTGRES_PASSWORD=odoo
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - PGDATA=/var/lib/postgresql/data/pgdata
     ports:
       - "5433:5432"
     volumes:
       - odoo-db-data:/var/lib/postgresql/data/pgdata
+
+  odoo-backup:
+    build: ./backup
+    depends_on:
+      - web
+    environment:
+      - ODOO_URL=${ODOO_URL}
+      - ODOO_DB_NAME=${PGDATABASE}
+      - ODOO_MASTER_PASSWORD=${ODOO_MASTER_PASSWORD}
+      - ARCHIVER_URL=${ARCHIVER_URL}
+      - ARCHIVER_TOKEN=${ARCHIVER_TOKEN}
+      - ARCHIVER_VILLE=${ARCHIVER_VILLE}
+    volumes:
+      - ./backup/backup-config.env:/config/backup-config.env:ro
+    restart: unless-stopped
+
 volumes:
   odoo-web-data:
   odoo-db-data:
