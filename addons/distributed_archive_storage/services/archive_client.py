@@ -9,6 +9,7 @@ Elle ne connaît rien d'Odoo (pas d'import odoo.* autre que la traduction) :
 elle reçoit une configuration simple et retourne des données Python.
 """
 import logging
+import time
 
 import requests
 
@@ -20,9 +21,22 @@ from .exceptions import (
     ArchiveGoneError,
     ArchiveUnavailableError,
     ArchiveServerError,
+    ArchiveValidationError,
 )
 
 _logger = logging.getLogger(__name__)
+
+# Erreurs réseau considérées comme transitoires : retenter a une chance
+# raisonnable de réussir (timeout ponctuel, connexion refusée pendant un
+# redémarrage). Une SSLError ou une erreur de résolution DNS ne sont PAS
+# transitoires — retenter ne fait qu'ajouter de la latence pour le même
+# échec, donc on ne les inclut pas ici.
+_TRANSIENT_EXCEPTIONS = (
+    requests.exceptions.Timeout,
+    requests.exceptions.ConnectionError,
+)
+_MAX_ATTEMPTS = 2  # 1 tentative initiale + 1 retry
+_RETRY_BACKOFF_SECONDS = 0.5
 
 
 class ArchiveClient:
@@ -34,10 +48,10 @@ class ArchiveClient:
         result = client.upload(content, "facture.pdf", "application/pdf")
     """
 
-    def __init__(self, api_url, city, api_token=None,
+    def __init__(self, api_url, site, api_token=None,
                  timeout=30, ssl_verify=True):
         self.api_url = api_url.rstrip("/")
-        self.city = city
+        self.site = site
         self.api_token = api_token
         self.timeout = timeout or 30
         self.ssl_verify = ssl_verify
@@ -51,7 +65,7 @@ class ArchiveClient:
         """
         return cls(
             api_url=server.api_url,
-            city=server.city,
+            site=server.site,
             api_token=server.api_token,
             timeout=server.timeout,
             ssl_verify=server.ssl_verify,
@@ -66,20 +80,32 @@ class ArchiveClient:
 
     def _request(self, method, path, **kwargs):
         url = f"{self.api_url}{path}"
-        try:
-            response = requests.request(
-                method, url,
-                timeout=self.timeout,
-                verify=self.ssl_verify,
-                headers=self._headers(),
-                **kwargs,
-            )
-        except requests.exceptions.RequestException as e:
-            # Le détail technique brut (urllib3, adresses mémoire, etc.) va
-            # UNIQUEMENT dans les logs — jamais dans le message remonté à
-            # l'utilisateur Odoo, qui doit rester lisible par un non-technicien.
-            _logger.error("Archive API injoignable (%s %s) : %s", method, url, e)
-            raise ArchiveConnectionError(self._readable_connection_error(e)) from e
+        last_exc = None
+        for attempt in range(1, _MAX_ATTEMPTS + 1):
+            try:
+                response = requests.request(
+                    method, url,
+                    timeout=self.timeout,
+                    verify=self.ssl_verify,
+                    headers=self._headers(),
+                    **kwargs,
+                )
+                break
+            except requests.exceptions.RequestException as e:
+                last_exc = e
+                # Le détail technique brut (urllib3, adresses mémoire, etc.) va
+                # UNIQUEMENT dans les logs — jamais dans le message remonté à
+                # l'utilisateur Odoo, qui doit rester lisible par un non-technicien.
+                _logger.error("Archive API injoignable (%s %s, tentative %s/%s) : %s",
+                               method, url, attempt, _MAX_ATTEMPTS, e)
+                is_transient = isinstance(e, _TRANSIENT_EXCEPTIONS)
+                if not is_transient or attempt == _MAX_ATTEMPTS:
+                    raise ArchiveConnectionError(self._readable_connection_error(e)) from e
+                time.sleep(_RETRY_BACKOFF_SECONDS * attempt)
+        else:
+            # Ne devrait pas arriver (la boucle lève ou "break" avant), mais
+            # évite un NameError sur `response` si jamais _MAX_ATTEMPTS <= 0.
+            raise ArchiveConnectionError(self._readable_connection_error(last_exc))
 
         if response.status_code == 401:
             raise ArchiveAuthError("Token d'authentification invalide ou manquant")
@@ -89,6 +115,8 @@ class ArchiveClient:
             raise ArchiveNotFoundError(self._error_detail(response))
         if response.status_code == 410:
             raise ArchiveGoneError(self._error_detail(response))
+        if response.status_code == 422:
+            raise ArchiveValidationError(self._error_detail(response))
         if response.status_code == 503:
             raise ArchiveUnavailableError(self._error_detail(response))
         if 500 <= response.status_code < 600:
@@ -132,6 +160,17 @@ class ArchiveClient:
         except ValueError:
             detail = response.text
 
+        if isinstance(detail, list):
+            # Erreur de validation FastAPI/Pydantic (422) : `detail` est une
+            # liste de dicts {"loc": [...], "msg": "...", "type": "..."}, pas
+            # une chaîne — on la reformate en phrase lisible plutôt que de
+            # laisser fuiter la représentation Python brute à l'utilisateur.
+            messages = [
+                item.get("msg", str(item)) if isinstance(item, dict) else str(item)
+                for item in detail
+            ]
+            detail = "; ".join(messages) or "Requête invalide"
+
         if response.status_code >= 500:
             looks_like_traceback = (
                 not detail
@@ -154,7 +193,8 @@ class ArchiveClient:
         response = self._request("GET", "/whoami")
         return response.json()
 
-    def upload(self, content: bytes, filename: str, content_type: str = None) -> dict:
+    def upload(self, content: bytes, filename: str, content_type: str = None,
+                uploaded_by: str = None) -> dict:
         """
         Envoie un fichier vers POST /documents.
 
@@ -164,8 +204,14 @@ class ArchiveClient:
         document unique. Cette méthode adapte l'appel single-file existant
         à ce nouveau contrat, et déballe la réponse pour garder la même
         interface de retour qu'avant (un seul dict) côté appelant Odoo.
+
+        uploaded_by : utilisateur Odoo à tracer comme auteur du dépôt côté
+        API ("Déposé par" + journal d'audit). Purement informatif — c'est
+        toujours le token de projet qui détermine les droits réels.
         """
-        params = {"ville": self.city}
+        params = {"site": self.site}
+        if uploaded_by:
+            params["uploaded_by"] = uploaded_by
         files = {"files": (filename, content, content_type or "application/octet-stream")}
         response = self._request("POST", "/documents", params=params, files=files)
         data = response.json()
@@ -185,7 +231,7 @@ class ArchiveClient:
         Retourne le JSON brut {"uploaded": [...], "errors": [...]} — l'appelant
         décide comment traiter les échecs partiels.
         """
-        params = {"ville": self.city}
+        params = {"site": self.site}
         files = [
             ("files", (filename, content, content_type or "application/octet-stream"))
             for content, filename, content_type in files_list
@@ -193,31 +239,57 @@ class ArchiveClient:
         response = self._request("POST", "/documents", params=params, files=files)
         return response.json()
 
-    def download(self, document_id) -> tuple:
+    def download(self, document_id, as_download: bool = False) -> tuple:
         """
-        Télécharge un document via GET /documents/{id}.
+        Récupère un document via GET /documents/{id}.
         Retourne (contenu_bytes, content_type).
+
+        as_download=False (défaut) : consultation -> l'API incrémente
+        view_count. C'est le cas des lectures internes/programmatiques
+        (rendu, pièce jointe d'un email...).
+        as_download=True : téléchargement réel par un utilisateur -> l'API
+        incrémente download_count. Les deux compteurs sont mutuellement
+        exclusifs côté API, d'où la nécessité de distinguer les deux ici.
         """
-        params = {"ville": self.city}
+        params = {"site": self.site}
+        if as_download:
+            params["download"] = "true"
         response = self._request(
             "GET", f"/documents/{document_id}", params=params, stream=True,
         )
         content_type = response.headers.get("content-type", "application/octet-stream")
         return response.content, content_type
 
-    def delete(self, document_id, hard: bool = False) -> dict:
+    def list_documents(self, file_type: str = None, limit: int = 20,
+                        include_deleted: bool = False) -> list:
+        """
+        Liste les documents du projet via GET /documents. Utilisé pour la
+        vérification (ex: confirmer qu'un upload est bien visible côté API),
+        pas dans le flux d'archivage lui-même.
+        """
+        params = {"site": self.site, "limit": limit, "include_deleted": include_deleted}
+        if file_type:
+            params["file_type"] = file_type
+        response = self._request("GET", "/documents", params=params)
+        return response.json()
+
+    def delete(self, document_id, hard: bool = None) -> dict:
         """
         Supprime un document.
-        hard=False (défaut) : soft-delete, DELETE /documents/{id}.
-        hard=True : suppression physique irréversible (fichier + entrée DB).
+        hard=None (défaut) : n'envoie PAS le paramètre `hard` -- l'API
+        applique alors le `delete_mode` (soft/hard) configuré pour le projet
+        du token utilisé, côté console. hard=True/False : force
+        explicitement le mode, quel que soit ce réglage.
         """
-        params = {"ville": self.city, "hard": "true" if hard else "false"}
+        params = {"site": self.site}
+        if hard is not None:
+            params["hard"] = "true" if hard else "false"
         response = self._request("DELETE", f"/documents/{document_id}", params=params)
         return response.json()
 
     def rename(self, document_id, new_filename: str) -> dict:
         """Met à jour le nom affiché côté archive (PATCH /documents/{id})."""
-        params = {"ville": self.city}
+        params = {"site": self.site}
         response = self._request(
             "PATCH", f"/documents/{document_id}", params=params,
             json={"filename": new_filename},

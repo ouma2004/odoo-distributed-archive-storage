@@ -38,3 +38,7 @@ class ArchiveUnavailableError(ArchiveError):
 
 class ArchiveServerError(ArchiveError):
     """Erreur serveur inattendue côté API (HTTP 5xx autre que 503 documenté)."""
+
+
+class ArchiveValidationError(ArchiveError):
+    """Requête malformée ou fichier manquant, rejetée par l'API (HTTP 422)."""

@@ -8,7 +8,7 @@
             <list>
                 <field name="priority"/>
                 <field name="name"/>
-                <field name="city"/>
+                <field name="site"/>
                 <field name="project_name"/>
                 <field name="connection_mode"/>
                 <field name="api_url"/>
@@ -37,12 +37,11 @@
                     <group>
                         <group string="Connexion">
                             <field name="api_url" placeholder="https://archive-rabat.exemple.ma"/>
-                            <field name="city"/>
+                            <field name="site"/>
                             <field name="project_name" readonly="1"/>
                             <field name="connection_mode" readonly="1"/>
                             <field name="timeout"/>
                             <field name="priority"/>
-                            <field name="deletion_policy" widget="radio"/>
                             <field name="active"/>
                         </group>
                         <group string="Sécurité"

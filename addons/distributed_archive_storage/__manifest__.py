@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 {
     "name": "Distributed Archive Storage",
-    "version": "19.0.1.0.0",
+    "version": "19.0.1.1.0",
     "category": "Discuss",
     "summary": "Utilise un système d'archivage distribué (FastAPI/MinIO) comme Storage Provider pour les pièces jointes Odoo",
     "description": """

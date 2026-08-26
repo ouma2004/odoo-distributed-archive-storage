@@ -7,7 +7,7 @@ from odoo.tools.translate import _
 class ArchiveStorageServer(models.Model):
     """
     Représente un serveur d'archivage distribué (une API FastAPI donnée,
-    ciblant une 'ville' précise parmi celles qu'elle expose).
+    ciblant un 'site' précis parmi ceux qu'elle expose).
 
     Ce modèle est volontairement dépourvu de toute logique métier de
     stockage : il ne fait que STOCKER la configuration de connexion.
@@ -38,20 +38,20 @@ class ArchiveStorageServer(models.Model):
         string="API URL", required=True,
         help="URL de base de l'API FastAPI, ex: https://archive-rabat.exemple.ma",
     )
-    city = fields.Char(
-        string="City", required=True,
+    site = fields.Char(
+        string="Site", required=True,
         help=(
-            "Valeur technique 'ville' envoyée à l'API (paramètre ?ville=...). "
-            "Doit correspondre à une entrée VILLES_ACTIVES du déploiement "
+            "Valeur technique 'site' envoyée à l'API (paramètre ?site=...). "
+            "Doit correspondre à une entrée SITES_ACTIVES du déploiement "
             "FastAPI ciblé par API URL. Vérifiable via 'Tester la connexion'."
         ),
     )
-    # ── SUPPRIMÉ : backup_city ────────────────────────────────────────
+    # ── SUPPRIMÉ : backup_site ────────────────────────────────────────
     # La réplication inter-sites est désormais entièrement pilotée côté
-    # serveur (variables Helm {VILLE}_BACKUP_OF / REMOTE_API_xxx), pas au
-    # niveau d'un enregistrement Odoo individuel. Forcer une backup_city
+    # serveur (variables Helm {SITE}_BACKUP_OF / REMOTE_API_xxx), pas au
+    # niveau d'un enregistrement Odoo individuel. Forcer un backup_site
     # ici échouerait de toute façon côté API pour un site distant (voir
-    # config.py: validate_ville, pas validate_ville_or_remote, sur la
+    # config.py: validate_site, pas validate_site_or_remote, sur la
     # route d'override explicite).
 
     timeout = fields.Integer(
@@ -67,19 +67,6 @@ class ArchiveStorageServer(models.Model):
         help="Si vide : tous les utilisateurs internes peuvent choisir ce serveur. "
              "Si renseigné : seuls les utilisateurs listés peuvent le sélectionner "
              "dans leurs préférences personnelles.",
-    )
-    deletion_policy = fields.Selection(
-        [
-            ("soft", "Soft Delete (garder une trace)"),
-            ("hard", "Suppression physique (irréversible)"),
-        ],
-        string="Deletion Policy", default="soft", required=True,
-        help="Politique appliquée à TOUS les fichiers de ce serveur lors de "
-             "leur suppression dans Odoo. "
-             "Soft Delete : le fichier reste dans MinIO, marqué DELETED "
-             "(traçabilité, récupérable manuellement côté API). "
-             "Suppression physique : le fichier et son entrée PostgreSQL "
-             "sont supprimés définitivement — AUCUN retour en arrière possible.",
     )
     require_user_credentials = fields.Boolean(
         string="Require User Credentials",
@@ -130,13 +117,15 @@ class ArchiveStorageServer(models.Model):
     ssl_verify = fields.Boolean(string="Verify SSL", default=True)
     email = fields.Char(string="Contact Email", help="Contact technique responsable de ce serveur (informatif).")
 
-    _sql_constraints = [
-        (
-            "city_api_url_uniq",
-            "unique(city, api_url)",
-            "Un serveur avec cette ville et cette API URL existe déjà.",
-        ),
-    ]
+    # Odoo 19 a supprimé le support de `_sql_constraints` (liste de tuples) :
+    # il était silencieusement ignoré — seul un WARNING au chargement le
+    # signalait — donc AUCUNE contrainte d'unicité n'existait réellement en
+    # base, et deux serveurs identiques (même site + même API URL) pouvaient
+    # être créés. On utilise la forme supportée, models.Constraint.
+    _site_api_url_uniq = models.Constraint(
+        "UNIQUE (site, api_url)",
+        "Un serveur avec ce site et cette API URL existe déjà.",
+    )
 
     def action_test_connection(self):
         """
@@ -157,12 +146,12 @@ class ArchiveStorageServer(models.Model):
                 "Le serveur d'archivage a répondu de façon inattendue : %s"
             ) % str(e))
 
-        available_cities = health.get("villes", [])
-        if self.city not in available_cities:
+        available_sites = health.get("sites", [])
+        if self.site not in available_sites:
             raise UserError(_(
-                "L'API a répondu, mais la ville configurée '%s' n'existe pas "
-                "sur ce déploiement. Villes disponibles : %s"
-            ) % (self.city, ", ".join(available_cities)))
+                "L'API a répondu, mais le site configuré '%s' n'existe pas "
+                "sur ce déploiement. Sites disponibles : %s"
+            ) % (self.site, ", ".join(available_sites)))
 
         # ── NOUVEAU : résolution du projet via /whoami ────────────────
         try:
@@ -194,9 +183,9 @@ class ArchiveStorageServer(models.Model):
             "tag": "display_notification",
             "params": {
                 "title": _("Connexion réussie"),
-                "message": _("Pipeline : %s — Villes : %s — Mode : %s") % (
+                "message": _("Pipeline : %s — Sites : %s — Mode : %s") % (
                     health.get("pipeline", health.get("version", "?")),
-                    ", ".join(available_cities), mode_label,
+                    ", ".join(available_sites), mode_label,
                 ),
                 "type": "success",
                 "sticky": False,

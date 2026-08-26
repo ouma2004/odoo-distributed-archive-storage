@@ -28,17 +28,18 @@ services:
     volumes:
       - odoo-db-data:/var/lib/postgresql/data/pgdata
 
+  # Toute la configuration (y compris le mot de passe maître Odoo et le
+  # token doc-archiver) vient de backup/backup-config.env, monté ci-dessous
+  # et RELU EN CONTINU par le script : modifier ce fichier suffit, aucun
+  # rebuild ni redémarrage de conteneur n'est nécessaire.
+  #
+  # Ce fichier n'est pas versionné (il contient deux secrets) — le créer
+  # avant le premier démarrage :
+  #     cp backup/backup-config.env.example backup/backup-config.env
   odoo-backup:
     build: ./backup
     depends_on:
       - web
-    environment:
-      - ODOO_URL=${ODOO_URL}
-      - ODOO_DB_NAME=${PGDATABASE}
-      - ODOO_MASTER_PASSWORD=${ODOO_MASTER_PASSWORD}
-      - ARCHIVER_URL=${ARCHIVER_URL}
-      - ARCHIVER_TOKEN=${ARCHIVER_TOKEN}
-      - ARCHIVER_VILLE=${ARCHIVER_VILLE}
     volumes:
       - ./backup/backup-config.env:/config/backup-config.env:ro
     restart: unless-stopped

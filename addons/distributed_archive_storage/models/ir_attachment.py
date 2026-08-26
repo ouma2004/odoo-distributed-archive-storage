@@ -16,6 +16,7 @@ from ..services.exceptions import (
     ArchiveGoneError,
     ArchiveUnavailableError,
     ArchiveServerError,
+    ArchiveValidationError,
 )
 
 _logger = logging.getLogger(__name__)
@@ -109,7 +110,68 @@ class IrAttachment(models.Model):
                 for rec in self:
                     self._force_archive_fields_sql(rec.id, fname, file_size, checksum)
             return result
-        return super().write(vals)
+
+        # Un renommage doit suivre le fichier jusqu'à l'archive : sans ça,
+        # Odoo et l'API divergent silencieusement (Odoo affiche le nouveau
+        # nom, la console d'archivage l'ancien) sans qu'aucune erreur ne le
+        # signale. On repère les enregistrements dont le nom change AVANT
+        # l'écriture, puis on propage après.
+        renamed = []
+        if vals.get("name"):
+            renamed = [
+                rec for rec in self
+                if rec.name != vals["name"]
+                and rec.store_fname
+                and rec.store_fname.startswith(f"{ARCHIVE_FNAME_PREFIX}:")
+            ]
+
+        result = super().write(vals)
+
+        for rec in renamed:
+            rec._sync_archive_rename(vals["name"])
+
+        return result
+
+    def _sync_archive_rename(self, new_name):
+        """
+        Répercute un renommage vers l'API (PATCH /documents/{id}).
+
+        En cas d'échec « dur » (API injoignable, jeton refusé), on lève :
+        l'exception annule la transaction, donc Odoo conserve l'ancien nom
+        et les deux systèmes restent cohérents — c'est préférable à un
+        renommage local qui ne serait jamais reflété côté archive.
+
+        En revanche, si le document n'existe plus côté archive (404/410),
+        bloquer le renommage n'apporterait rien : on se contente de le
+        journaliser.
+        """
+        self.ensure_one()
+        server, document_id = self._parse_archive_fname(self.store_fname)
+        if server is None:
+            _logger.error("Archive fname invalide au renommage : %s", self.store_fname)
+            return
+
+        client = ArchiveClient.from_server(server)
+        try:
+            client.rename(document_id, new_name)
+        except (ArchiveNotFoundError, ArchiveGoneError) as e:
+            _logger.warning(
+                "Renommage non propagé : document %s absent de l'archive (%s) : %s",
+                document_id, server.name, e,
+            )
+        except ArchiveConnectionError as e:
+            raise UserError(_(
+                "Impossible de renommer ce document dans l'archive : %s"
+            ) % str(e))
+        except ArchiveAuthError:
+            raise UserError(_(
+                "Accès refusé par le serveur d'archivage '%s' : le jeton "
+                "configuré n'est plus valide. Le document n'a pas été renommé."
+            ) % server.name)
+        except ArchiveError as e:
+            raise UserError(_(
+                "Échec du renommage sur le serveur d'archivage '%s'. %s"
+            ) % (server.name, str(e)))
 
     def _force_archive_fields_sql(self, record_id, fname, file_size, checksum):
         """
@@ -132,6 +194,19 @@ class IrAttachment(models.Model):
             "(store_fname=%s, file_size=%s)",
             record_id, fname, file_size,
         )
+
+    def _archive_uploaded_by(self):
+        """
+        Identité de l'utilisateur Odoo à transmettre à l'API pour tracer
+        l'auteur du dépôt ("Déposé par" + journal d'audit côté archive).
+        Sans ça, l'API ne voit que le token du projet et ne peut donc
+        attribuer le dépôt à personne.
+
+        Purement informatif : l'API ne s'en sert JAMAIS pour un contrôle
+        d'accès (seul le token de projet fait foi de ce côté-là).
+        """
+        user = self.env.user
+        return f"{user.name} <{user.login}>" if user.login else user.name
 
     def _process_archive_upload(self, vals):
         has_datas = bool(vals.get("datas"))
@@ -176,7 +251,8 @@ class IrAttachment(models.Model):
 
         client = ArchiveClient.from_server(server)
         try:
-            result = client.upload(bin_data, filename, mimetype)
+            result = client.upload(bin_data, filename, mimetype,
+                                    uploaded_by=self._archive_uploaded_by())
         except ArchiveAuthError:
             raise UserError(_(
                 "Authentification refusée par le serveur d'archivage '%s'. "
@@ -188,6 +264,11 @@ class IrAttachment(models.Model):
             raise UserError(_(
                 "Impossible d'archiver le fichier : %s"
             ) % str(e))
+        except ArchiveValidationError as e:
+            raise UserError(_(
+                "Le serveur d'archivage '%s' a rejeté ce fichier (requête invalide "
+                "ou fichier vide) : %s"
+            ) % (server.name, str(e)))
         except ArchiveError as e:
             raise UserError(_(
                 "Échec de l'archivage du fichier sur le serveur '%s'. %s"
@@ -237,7 +318,8 @@ class IrAttachment(models.Model):
 
         client = ArchiveClient.from_server(server)
         try:
-            result = client.upload(bin_data, filename, mimetype)
+            result = client.upload(bin_data, filename, mimetype,
+                                    uploaded_by=self._archive_uploaded_by())
         except ArchiveAuthError:
             raise UserError(_(
                 "Authentification refusée par le serveur d'archivage '%s'. "
@@ -249,6 +331,11 @@ class IrAttachment(models.Model):
             raise UserError(_(
                 "Impossible d'archiver le fichier : %s"
             ) % str(e))
+        except ArchiveValidationError as e:
+            raise UserError(_(
+                "Le serveur d'archivage '%s' a rejeté ce fichier (requête invalide "
+                "ou fichier vide) : %s"
+            ) % (server.name, str(e)))
         except ArchiveError as e:
             raise UserError(_(
                 "Échec de l'archivage du fichier sur le serveur '%s'. %s"
@@ -281,6 +368,14 @@ class IrAttachment(models.Model):
         faire planter un envoi d'email en masse ou un rendu PDF groupé), le
         téléchargement interactif DOIT informer clairement l'utilisateur en
         cas d'échec plutôt que de lui donner un fichier vide sans explication.
+
+        Le contenu récupéré ici est réutilisé TEL QUEL pour construire le
+        Stream. Auparavant on appelait client.download() uniquement pour
+        valider, puis Stream.from_binary_field(self, "raw") relançait un
+        SECOND appel API via _compute_raw -> _file_read : chaque
+        téléchargement comptait donc deux consultations côté API (et zéro
+        téléchargement, puisqu'aucun des deux appels ne passait
+        download=true). Un seul appel, marqué comme téléchargement réel.
         """
         self.ensure_one()
         if self.store_fname and self.store_fname.startswith(f"{ARCHIVE_FNAME_PREFIX}:"):
@@ -289,7 +384,7 @@ class IrAttachment(models.Model):
             if server is not None:
                 client = ArchiveClient.from_server(server)
                 try:
-                    client.download(document_id)
+                    content, content_type = client.download(document_id, as_download=True)
                 except (ArchiveConnectionError, ArchiveUnavailableError, ArchiveServerError) as e:
                     raise UserError(_(
                         "Le serveur d'archivage '%s' est temporairement injoignable. "
@@ -305,6 +400,16 @@ class IrAttachment(models.Model):
                     raise UserError(_(
                         "Ce document n'est plus disponible dans l'archive. %s"
                     ) % str(e))
+
+                return Stream(
+                    type="data",
+                    data=content,
+                    mimetype=self.mimetype or content_type,
+                    download_name=self.name,
+                    etag=self._compute_checksum(content),
+                    last_modified=self.write_date if self._log_access else None,
+                    size=len(content),
+                )
             return Stream.from_binary_field(self, "raw")
         return super()._to_http_stream()
 
@@ -349,14 +454,16 @@ class IrAttachment(models.Model):
             return
 
         client = ArchiveClient.from_server(server)
-        hard = server.deletion_policy == "hard"
         try:
-            client.delete(document_id, hard=hard)
+            # Pas de `hard=` explicite : on laisse l'API décider selon le
+            # `delete_mode` configuré pour le projet (cf. token) côté
+            # console — Odoo ne duplique plus ce réglage.
+            client.delete(document_id)
         except ArchiveNotFoundError:
             pass
         except ArchiveError as e:
-            _logger.error("Echec suppression (%s) archive doc %s (%s) : %s",
-                          server.deletion_policy, document_id, server.name, e)
+            _logger.error("Echec suppression archive doc %s (%s) : %s",
+                          document_id, server.name, e)
 
     def action_delete_and_return_to_list(self):
         """

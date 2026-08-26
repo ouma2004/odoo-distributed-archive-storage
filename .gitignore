@@ -10,8 +10,28 @@ __pycache__/
 
 # Variables d'environnement
 .env
-# Configuration locale Odoo
+.env.*
+!.env.example
+
+# Configuration locale Odoo (contient admin_passwd + mot de passe Postgres)
 config/odoo.conf
+
+# Configuration du service de backup — contient le mot de passe MAÎTRE
+# Odoo et le token doc-archiver. Seul backup-config.env.example est versionné.
+backup/backup-config.env
+
+# Sauvegardes / dumps produits localement
+*.zip
+*.dump
+*.sql
+backups/
+
+# Secrets divers
+*.pem
+*.key
+*_secret*
+credentials.json
+token.json
 
 # Environnements virtuels
 venv/
@@ -27,3 +47,5 @@ venv/
 # Fichiers système
 .DS_Store
 Thumbs.db
+
+.claude
