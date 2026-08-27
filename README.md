@@ -394,18 +394,6 @@ Côté API, un token de projet ne donne accès qu'aux documents de ce projet.
 
 ---
 
-## Limites connues et pistes d'évolution
-
-Documenté volontairement — ces points sont des choix assumés, pas des oublis.
-
-| Limite | Détail |
-|---|---|
-| **Attribution non authentifiée** | Odoo transmet l'utilisateur courant à l'API pour la traçabilité, mais ce champ est déclaré par le client : il est informatif et n'intervient jamais dans une décision d'autorisation. Une attribution non-répudiable exigerait de vrais comptes utilisateurs côté API. |
-| **Pas d'alerte sur échec de sauvegarde** | Les échecs sont journalisés avec une cause probable explicite, mais aucune notification externe n'est émise. |
-| **Restauration manuelle** | La restauration passe par le gestionnaire de bases d'Odoo ; aucun script automatisé. |
-| **Réplication inter-sites à activer** | Le mécanisme existe côté API mais dépend d'un site de secours réellement joignable. |
-
----
 
 ## Dépannage
 
@@ -427,6 +415,3 @@ docker compose logs -f web | grep -i archive     # module Odoo
 
 ---
 
-## Licence
-
-LGPL-3
