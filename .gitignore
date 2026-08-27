@@ -16,9 +16,6 @@ __pycache__/
 # Configuration locale Odoo (contient admin_passwd + mot de passe Postgres)
 config/odoo.conf
 
-# Configuration du service de backup — contient le mot de passe MAÎTRE
-# Odoo et le token doc-archiver. Seul backup-config.env.example est versionné.
-backup/backup-config.env
 
 # Sauvegardes / dumps produits localement
 *.zip

@@ -74,8 +74,7 @@ Les deux projets ne partagent **aucun code** — uniquement un contrat HTTP.
 | Composant | Rôle |
 |---|---|
 | `addons/distributed_archive_storage/` | Module Odoo — redirige `ir.attachment` vers l'API |
-| `backup/` | Service autonome — sauvegarde périodique de la base Odoo vers l'API |
-| `config/`, `docker-compose.yml` | Environnement de développement complet (Odoo + PostgreSQL + backup) |
+| `config/`, `docker-compose.yml` | Environnement de développement complet (Odoo + PostgreSQL) |
 
 ---
 
@@ -156,18 +155,16 @@ les logs serveur.
 Le client filtre même un éventuel traceback Python qui aurait fuité dans une
 réponse 500 : l'utilisateur ne doit jamais en voir un.
 
-### 7. La configuration de sauvegarde ne dépend ni d'Odoo ni de l'API
+### 7. La sauvegarde de la base est pilotée hors d'Odoo
 
-Elle vit dans un fichier local, relu à chaud.
+Elle est déclenchée par doc-archiver, pas par ce module.
 
 *Pourquoi* : un système de sauvegarde ne doit pas dépendre de ce qu'il
-sauvegarde. Si ces réglages vivaient dans Odoo, ils seraient illisibles
-précisément quand Odoo est en panne — c'est-à-dire quand la sauvegarde compte
-le plus. Même raisonnement, plus faible, pour l'API : le déclenchement d'une
-sauvegarde ne doit pas attendre qu'un autre service réponde.
+sauvegarde. Des réglages vivant dans Odoo seraient illisibles précisément quand
+Odoo est en panne — c'est-à-dire quand la sauvegarde compte le plus.
 
-Corollaire : les secrets (mot de passe maître, token) restent sur l'hôte Odoo
-et ne sont jamais répliqués dans la base d'un autre système.
+Corollaire : le mot de passe maître ne vit plus en clair sur l'hôte Odoo, il est
+stocké chiffré côté doc-archiver et déchiffré en mémoire le temps de l'appel.
 
 ---
 
@@ -178,11 +175,10 @@ et ne sont jamais répliqués dans la base d'un autre système.
 - **Docker** et **Docker Compose**
 - Une instance **doc-archiver** joignable, avec un **projet** créé (et son
   token) et le **site** cible actif
-- Pour les sauvegardes : un **second projet dédié**
 
-> Utilisez deux projets distincts : un pour les pièces jointes, un pour les
-> sauvegardes. Le service de backup purge les anciens fichiers de son projet —
-> le mélanger avec les pièces jointes serait risqué.
+> Un seul projet suffit désormais : les sauvegardes de la base Odoo sont
+> rangées dans un sous-dossier dédié (`_backups/odoo/`) du même bucket, avec
+> leur propre rétention — elles ne peuvent plus se mélanger aux pièces jointes.
 
 ### Démarrage
 
@@ -190,8 +186,7 @@ et ne sont jamais répliqués dans la base d'un autre système.
 # 1. Fichiers de configuration (aucun n'est versionné : ils contiennent des secrets)
 cp .env.example .env
 cp config/odoo.conf.example config/odoo.conf
-cp backup/backup-config.env.example backup/backup-config.env
-chmod 600 .env config/odoo.conf backup/backup-config.env
+chmod 600 .env config/odoo.conf
 
 # 2. Renseigner les valeurs (voir tableau ci-dessous), puis démarrer
 docker compose up -d
@@ -201,7 +196,6 @@ docker compose up -d
 |---|---|
 | `.env` | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` |
 | `config/odoo.conf` | `admin_passwd`, `db_password` |
-| `backup/backup-config.env` | Voir [Service de sauvegarde](#service-de-sauvegarde) |
 
 Odoo écoute sur **http://localhost:9030**.
 
@@ -305,79 +299,44 @@ contenu via l'API au lieu du disque.
 
 ---
 
-## Service de sauvegarde
+## Sauvegarde de la base Odoo
 
-Conteneur autonome qui, à intervalle régulier :
+Assurée par **doc-archiver**, plus par ce dépôt. Le service `odoo-backup` qui
+vivait ici a été retiré : il faisait exactement le même travail, mais avec le
+mot de passe maître en clair dans `backup/backup-config.env`.
 
-1. appelle `/web/database/backup` d'Odoo (zip : filestore + `dump.sql` +
-   `manifest.json`)
-2. dépose le zip dans un **projet dédié** de l'API
-3. purge les sauvegardes au-delà de la rétention configurée
+Configuration : console doc-archiver -> **Projets** -> *Modifier* -> section
+**Instance Odoo**.
 
-### Configuration à chaud
+| Champ | Valeur |
+|---|---|
+| Hébergement | `Serveur` |
+| URL Odoo | racine de l'instance, **sans** suffixe `/odoo` (le gestionnaire de base est à la racine) |
+| Nom de la base | ex. `ma_base` |
+| Mot de passe maître | = `admin_passwd` de `config/odoo.conf` — stocké **chiffré** |
+| Intervalle / rétention | vides = réglage global |
 
-Toute la configuration vit dans `backup/backup-config.env`, relu en continu —
-avant chaque cycle et toutes les 10 s pendant l'attente. Modifier une valeur
-prend effet au cycle suivant, **sans rebuild ni redémarrage**.
+Le bouton **Tester la connexion** valide URL + base + mot de passe contre
+l'instance réelle avant d'enregistrer.
 
-```ini
-BACKUP_INTERVAL_SECONDS=86400    # délai entre deux sauvegardes
-BACKUP_RETENTION_COUNT=10        # sauvegardes conservées
-BACKUP_INCLUDE_FILESTORE=true    # true = zip complet, false = dump SQL seul
+> **URL depuis un conteneur** : `localhost` désigne le conteneur qui appelle,
+> pas l'hôte. Si doc-archiver tourne dans Kubernetes/minikube et Odoo sur
+> l'hôte, utiliser `http://host.minikube.internal:9030`.
 
-ODOO_URL=http://web:8069
-ODOO_DB_NAME=ma_base
-ODOO_MASTER_PASSWORD=...         # = admin_passwd de config/odoo.conf
+Les sauvegardes atterrissent sous `_backups/odoo/` dans le bucket du projet,
+marquées `is_backup=true` — donc invisibles dans l'explorateur de documents, et
+avec une rétention **indépendante** de celle des sauvegardes de projet.
 
-ARCHIVER_URL=http://host.docker.internal:30800
-ARCHIVER_TOKEN=tok_...           # token du projet DÉDIÉ aux sauvegardes
-ARCHIVER_SITE=casa
-```
+### Cas Odoo.sh
 
-Si une valeur devient invalide après un démarrage réussi (fichier tronqué en
-cours d'édition, faute de frappe), le service **conserve la dernière valeur
-valide connue** et le signale — il ne repart jamais avec une configuration
-vide.
+Odoo.sh bloque l'accès externe au gestionnaire de base : doc-archiver ne peut
+pas aller chercher le dump. C'est alors à Odoo de **pousser** son backup vers
+`POST /documents` avec le token du projet, en passant
+`is_backup=true&folder_prefix=_backups/odoo` — sans ces deux paramètres, le zip
+serait traité comme une pièce jointe ordinaire.
 
-### Vérifier que les sauvegardes fonctionnent
-
-```bash
-docker compose ps odoo-backup            # le service tourne-t-il ?
-docker compose logs -f odoo-backup       # suivre un cycle en direct
-docker compose restart odoo-backup       # forcer un cycle immédiat
-```
-
-Preuve réelle — le backup est-il arrivé côté API ?
-
-```bash
-TOKEN=$(grep '^ARCHIVER_TOKEN=' backup/backup-config.env | cut -d= -f2-)
-SITE=$(grep  '^ARCHIVER_SITE='  backup/backup-config.env | cut -d= -f2-)
-URL=$(grep   '^ARCHIVER_URL='   backup/backup-config.env | cut -d= -f2-)
-
-curl -s -H "Authorization: Bearer $TOKEN" "$URL/documents?site=$SITE&limit=20" \
-  | jq -r '.[] | select(.filename|startswith("odoo_"))
-           | "\(.created_at)  \(.filename)  \(.file_size) octets"'
-```
-
-Un cycle réussi ressemble à :
-
-```
-[BACKUP] Backup Odoo OK (15M)
-[BACKUP] Upload vers doc-archiver : OK
-[BACKUP] Rétention : rien à purger
-[BACKUP] Attente (intervalle courant : 86400s)
-```
-
-### Dimensionnement de la rétention
-
-Si le projet qui héberge ces sauvegardes est lui-même sauvegardé côté API,
-**chaque sauvegarde de projet embarque tous les zips Odoo présents**. Avec 48
-zips de 100 Mo, cela ferait ~4,8 Go par sauvegarde. Une rétention de **6 à 12**
-est un ordre de grandeur raisonnable.
-
-Il n'y a en revanche pas d'emboîtement infini : le service de sauvegarde de
-l'API exclut le dossier `_backups/` de son miroir, donc une sauvegarde de
-projet ne contient jamais les sauvegardes précédentes.
+L'ancien `backup/backup-script.sh` reste une bonne base pour écrire cette tâche
+planifiée : `git show ed1e18e` le restitue.
 
 ### Restaurer une base
 
@@ -398,13 +357,12 @@ projet ne contient jamais les sauvegardes précédentes.
 |---|---|
 | `.env` | Mots de passe PostgreSQL |
 | `config/odoo.conf` | `admin_passwd`, mot de passe de la base |
-| `backup/backup-config.env` | Mot de passe maître Odoo + token doc-archiver |
 
 Seuls les `*.example` sont versionnés. Vérification :
 
 ```bash
-git check-ignore -v .env config/odoo.conf backup/backup-config.env
-git log --all --full-history -- .env config/odoo.conf backup/backup-config.env
+git check-ignore -v .env config/odoo.conf
+git log --all --full-history -- .env config/odoo.conf
 ```
 
 ### Le mot de passe maître Odoo
@@ -415,13 +373,14 @@ n'importe quelle base de l'instance. Ce n'est pas le mot de passe du compte
 
 Pour le changer sans coupure :
 
-1. `backup/backup-config.env` (pris en compte à chaud)
-2. `config/odoo.conf`, puis redémarrage d'Odoo
-3. Vérifier dans les logs que le cycle suivant affiche `Backup Odoo OK`
+1. `config/odoo.conf`, puis redémarrage d'Odoo
+2. Le mettre à jour dans doc-archiver (console -> Projets -> Instance Odoo)
+3. Cliquer **Tester la connexion** pour confirmer avant le cycle suivant
 
 Une divergence fait échouer les sauvegardes de façon **silencieuse** : Odoo
-répond `200` avec une page HTML d'erreur et le conteneur continue de tourner.
-Le script détecte ce cas et annonce la cause probable, mais rien n'alerte
+répond `200` avec une page HTML d'erreur, jamais un code d'erreur. doc-archiver
+vérifie la signature du zip reçu et refuse une réponse qui n'en est pas un,
+mais rien n'alerte
 en dehors des logs.
 
 ### Isolation des données
@@ -457,12 +416,13 @@ Documenté volontairement — ces points sont des choix assumés, pas des oublis
 | « Impossible de se connecter » | URL erronée ou API arrêtée | Depuis un conteneur, utiliser `host.docker.internal`, pas `localhost` |
 | Modification de code sans effet | Module non rechargé | `odoo -u distributed_archive_storage` puis redémarrage |
 | Pièce jointe restée en local | Utilisateur non configuré | Vérifier *Storage Provider* dans son profil |
-| `ECHEC upload : token invalide` | Projet de sauvegarde inexistant | Créer le projet dédié, reporter son token |
-| Aucune sauvegarde produite | Mot de passe maître divergent | Comparer `backup-config.env` et `config/odoo.conf` |
+| Aucune sauvegarde de base produite | Mot de passe maître, URL ou nom de base erronés | Console doc-archiver -> Instance Odoo -> **Tester la connexion** |
+| Sauvegarde de base « incomplète » | Hébergement « Serveur » sans URL/base/mot de passe | Bandeau ambre sur la page Projets de la console |
 
 ```bash
 docker compose logs -f web | grep -i archive     # module Odoo
-docker compose logs -f odoo-backup               # service de sauvegarde
+# Sauvegarde de la base : journal d'audit de la console doc-archiver
+# (action « odoo_backup_pull »), ou logs du pod api : grep ODOO-BACKUP
 ```
 
 ---
